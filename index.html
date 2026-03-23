@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>RRT* Path Planner — 3D Visualization</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+    tailwind.config = {
+        theme: { extend: {
+            colors: { "primary": "#000000" },
+            fontFamily: { "display": ["Public Sans", "sans-serif"] },
+            borderRadius: {"DEFAULT": "0px", "lg": "0px", "xl": "0px", "full": "9999px"},
+        }}
+    }
+</script>
+<style>
+    input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;background:#f1f5f9;outline:none;}
+    input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;background:#000;border:2px solid #fff;box-shadow:0 0 0 1px #000;cursor:pointer;}
+    input[type=range]::-moz-range-thumb{width:12px;height:12px;background:#000;border:2px solid #fff;box-shadow:0 0 0 1px #000;cursor:pointer;border-radius:0;}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+    .anim-in{animation:fadeIn .2s ease-out forwards}
+    .log-entry:hover{border-left-color:#000!important;background:#fff}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}} .pulse-dot{animation:pulse 1.5s ease-in-out infinite}
+    canvas{display:block}
+    .edit-active{background:#6366f1!important;color:#fff!important;border-color:#6366f1!important}
+    /* Toast */
+    @keyframes toastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}
+    @keyframes toastOut{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(40px)}}
+    .toast{animation:toastIn .3s ease-out forwards}
+    .toast-out{animation:toastOut .3s ease-in forwards}
+    /* Spinner */
+    @keyframes spin{to{transform:rotate(360deg)}} .spinner{animation:spin .6s linear infinite;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;width:14px;height:14px;display:inline-block}
+    /* Dropdown */
+    .algo-dropdown{display:none;position:absolute;top:100%;left:0;z-index:50;min-width:220px}
+    .algo-dropdown.open{display:block}
+    .algo-option{cursor:pointer;transition:all .1s}
+    .algo-option:hover{background:#f1f5f9}
+    .algo-option.active{background:#000;color:#fff}
+    /* History panel */
+    .hist-entry{cursor:pointer;transition:all .15s}
+    .hist-entry:hover{border-color:#000!important;background:#f8fafc}
+    .hist-entry.selected{border-color:#6366f1!important;background:#eef2ff}
+    /* Sidebar drawer */
+    .sidebar-drawer{position:absolute;top:0;left:0;bottom:0;width:280px;z-index:60;transform:translateX(-100%);transition:transform .25s ease-in-out;box-shadow:4px 0 24px rgba(0,0,0,.1)}
+    .sidebar-drawer.open{transform:translateX(0)}
+    .sidebar-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.15);z-index:55;opacity:0;pointer-events:none;transition:opacity .25s}
+    .sidebar-backdrop.open{opacity:1;pointer-events:auto}
+    /* Stats overlay */
+    .stats-card{position:relative;z-index:60;
+      animation:fadeIn .3s ease-out forwards;backdrop-filter:blur(8px)}
+    .stats-card .stat-value{font-size:1.5rem;font-weight:800;line-height:1}
+    /* Compare ghost paths */
+    .compare-badge{background:#6366f1;color:#fff;font-size:9px;padding:2px 6px;font-weight:700;letter-spacing:0.05em}
+    /* Planning timer */
+    @keyframes timerPulse{0%,100%{opacity:1}50%{opacity:.5}}
+    .timer-pulse{animation:timerPulse 1s ease-in-out infinite}
+</style>
+</head>
+<body class="bg-white font-display text-slate-900 overflow-hidden h-screen flex flex-col select-none">
+
+<!-- Toast Container -->
+<div id="toast-container" class="fixed bottom-4 right-4 z-[100] flex flex-col gap-2"></div>
+
+<!-- Stats Overlay Card (hidden by default) -->
+<div id="stats-overlay" class="hidden fixed inset-0 z-[80] flex items-center justify-center bg-black/20" onclick="closeStatsOverlay(event)">
+    <div class="stats-card bg-white/95 border border-slate-200 shadow-2xl p-6 w-[420px]" onclick="event.stopPropagation()">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-sm font-bold uppercase tracking-widest flex items-center gap-2"><span class="material-symbols-outlined text-base">analytics</span> Simulation Results</h3>
+            <button onclick="closeStatsOverlay()" class="text-slate-400 hover:text-black"><span class="material-symbols-outlined text-sm">close</span></button>
+        </div>
+        <div class="grid grid-cols-2 gap-4 mb-4" id="stats-grid"></div>
+        <div class="flex justify-between items-center text-[10px] text-slate-400 pt-3 border-t border-slate-100">
+            <span id="stats-meta"></span>
+            <span class="font-bold text-green-600" id="stats-saved-label">✓ Auto-saved to history</span>
+        </div>
+    </div>
+</div>
+
+<!-- Planning Timer (floating, hidden by default) -->
+<div id="planning-timer" class="hidden fixed top-16 left-1/2 -translate-x-1/2 z-[70] bg-black text-white px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg">
+    <span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>
+    <span>Planning</span>
+    <span id="timer-value" class="font-mono">0.0s</span>
+</div>
+
+<!-- Header -->
+<header class="border-b border-slate-200 px-5 py-3 flex items-center justify-between bg-white z-10">
+    <div class="flex items-center gap-3">
+        <button onclick="toggleSidebar()" id="btn-sidebar" class="p-1.5 border border-slate-200 hover:bg-slate-50 transition-colors" title="Toggle Controls">
+            <span class="material-symbols-outlined text-lg" id="sidebar-icon">menu</span>
+        </button>
+        <div class="bg-primary p-1"><span class="material-symbols-outlined text-white text-xl">conversion_path</span></div>
+        <h1 class="text-lg font-bold tracking-tighter uppercase">RRT* Path Planner</h1>
+        <button onclick="toggle3DMode()" id="btn-3d-mode" class="text-[10px] font-bold px-2 py-0.5 border border-indigo-500 text-indigo-500 ml-2 hover:bg-indigo-500 hover:text-white transition-all cursor-pointer">3D MODE</button>
+    </div>
+    <div class="flex items-center gap-5">
+        <div class="flex items-center gap-2" id="hdr-status">
+            <span class="size-2 rounded-full bg-slate-400"></span>
+            <span class="text-xs font-semibold uppercase tracking-widest">Ready</span>
+        </div>
+    </div>
+</header>
+
+<main class="flex-1 flex flex-col overflow-hidden relative">
+
+<!-- Sidebar Backdrop -->
+<div id="sidebar-backdrop" class="sidebar-backdrop" onclick="toggleSidebar()"></div>
+
+<!-- ─── Left Sidebar (overlay drawer) ─────────────────────────── -->
+<aside id="sidebar-drawer" class="sidebar-drawer bg-white flex flex-col overflow-y-auto text-sm">
+
+    <!-- Cloud Engine (compact) -->
+    <section class="px-5 py-2.5 border-b border-slate-200 flex items-center justify-between">
+        <h2 class="text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
+            <span class="material-symbols-outlined text-sm">architecture</span> Cloud Engine
+        </h2>
+        <div class="flex items-center gap-1.5">
+            <span id="ws-dot" class="size-2 rounded-full bg-red-500"></span>
+            <span class="text-[9px] text-slate-500 font-bold uppercase tracking-widest" id="ws-status-text">DISCONNECTED</span>
+        </div>
+    </section>
+
+    <!-- Simulation History (prominent) -->
+    <section class="p-4 border-b border-slate-200 bg-slate-50/50">
+        <h2 class="text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-2 cursor-pointer" onclick="toggleHistoryPanel()">
+            <span class="material-symbols-outlined text-base">history</span> Simulation History
+            <span class="material-symbols-outlined text-xs ml-auto transition-transform" id="hist-toggle-icon">expand_more</span>
+        </h2>
+        <div id="history-panel" class="space-y-2 max-h-52 overflow-y-auto" style="display:none"></div>
+        <div id="history-actions" class="flex gap-2 mt-2" style="display:none">
+            <button onclick="refreshHistory()" class="flex-1 py-1.5 text-[9px] font-bold uppercase tracking-widest border border-slate-200 hover:border-primary transition-colors bg-white">Refresh</button>
+            <button onclick="compareSelected()" id="btn-compare" class="flex-1 py-1.5 text-[9px] font-bold uppercase tracking-widest border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-30 bg-white" disabled>Compare</button>
+        </div>
+    </section>
+
+    <!-- Save / Load Scenarios -->
+    <section class="p-4 border-b border-slate-200">
+        <h2 class="text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-2">
+            <span class="material-symbols-outlined text-sm">save</span> Scenarios
+        </h2>
+        <div class="flex gap-2">
+            <button onclick="saveScenario()" class="flex-1 py-1.5 text-[10px] font-bold uppercase tracking-widest border border-slate-200 hover:border-primary transition-colors flex items-center justify-center gap-1">
+                <span class="material-symbols-outlined text-xs">download</span> Save
+            </button>
+            <label class="flex-1 py-1.5 text-[10px] font-bold uppercase tracking-widest border border-slate-200 hover:border-primary transition-colors flex items-center justify-center gap-1 cursor-pointer">
+                <span class="material-symbols-outlined text-xs">upload</span> Load
+                <input type="file" accept=".json" onchange="loadScenario(event)" class="hidden"/>
+            </label>
+        </div>
+    </section>
+
+    <!-- Planner Parameters -->
+    <section class="p-4 border-b border-slate-200">
+        <h2 class="text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center gap-2">
+            <span class="material-symbols-outlined text-sm">tune</span> Hybrid Parameters
+        </h2>
+        <div id="params-panel" class="space-y-3"></div>
+    </section>
+
+    <!-- Animation Speed -->
+    <section class="p-4 border-b border-slate-200">
+        <h2 class="text-[10px] font-bold uppercase tracking-widest mb-2 flex items-center gap-2">
+            <span class="material-symbols-outlined text-sm">speed</span> Animation Speed
+        </h2>
+        <div class="space-y-1">
+            <div class="flex justify-between items-end">
+                <label class="text-[10px] font-medium uppercase text-slate-500">Speed</label>
+                <span class="text-xs font-bold" id="speed-val">1.0x</span>
+            </div>
+            <input type="range" min="0.1" max="5" step="0.1" value="1" oninput="animSpeed=parseFloat(this.value); document.getElementById('speed-val').textContent=this.value+'x';"/>
+        </div>
+    </section>
+
+    <!-- Fleet Status -->
+    <section class="p-4">
+        <h2 class="text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center gap-2">
+            <span class="material-symbols-outlined text-sm">flight_takeoff</span> Fleet Status
+        </h2>
+        <div class="space-y-3" id="fleet-panel"></div>
+    </section>
+</aside>
+
+<!-- ─── 3D Canvas (full width, centered on page) ─────────────── -->
+<div class="flex-1 relative bg-slate-50 flex flex-col min-h-0">
+    <div class="flex-1 relative min-h-0" id="canvas-wrap">
+        <canvas id="c3d"></canvas>
+        <!-- Algo Info Overlay -->
+        <div class="absolute top-3 left-3 p-3 bg-white/90 border border-slate-200 backdrop-blur-sm cursor-pointer z-50" onclick="toggleAlgoDropdown(event)">
+            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active Algorithm ▾</div>
+            <div class="font-bold text-sm mt-0.5" id="algo-label">RRT* + B-Spline Smoothing</div>
+            <!-- Algorithm Dropdown -->
+            <div id="algo-dropdown" class="algo-dropdown bg-white border border-slate-200 shadow-lg mt-2">
+                <div class="algo-option active p-3 text-xs font-bold border-b border-slate-100" data-algo="rrt_star" onclick="switchAlgorithm('rrt_star',event)">RRT* + B-Spline Smoothing</div>
+                <div class="algo-option p-3 text-xs font-bold border-b border-slate-100" data-algo="astar" onclick="switchAlgorithm('astar',event)">A* + B-Spline Smoothing</div>
+                <div class="algo-option p-3 text-xs font-bold" data-algo="dijkstra" onclick="switchAlgorithm('dijkstra',event)">Dijkstra + B-Spline Smoothing</div>
+            </div>
+        </div>
+        <!-- Camera hint -->
+        <div class="absolute bottom-3 left-3 text-[10px] text-slate-400 z-10" id="hint-text">
+            <span class="font-bold">Left-Click + Drag</span> to orbit · <span class="font-bold">Middle-Click + Drag</span> to pan · <span class="font-bold">Scroll</span> to zoom
+        </div>
+        <!-- Grid info -->
+        <div class="absolute bottom-3 right-3 text-[9px] font-bold uppercase text-slate-400 tracking-widest z-10" id="footer-info">Grid: 50×50</div>
+
+        <!-- Logs Overlay Panel (collapsible, floats on right edge) -->
+        <div id="logs-panel" class="absolute top-3 right-3 z-40 flex flex-col" style="width:280px;max-height:calc(100% - 24px)">
+            <div class="flex items-center gap-2 bg-black/80 text-white px-3 py-2 cursor-pointer backdrop-blur-sm" onclick="toggleLogsPanel()">
+                <span class="material-symbols-outlined text-sm">list_alt</span>
+                <span class="text-[10px] font-bold uppercase tracking-widest flex-1">Logs</span>
+                <span class="material-symbols-outlined text-xs" id="logs-toggle-icon">expand_more</span>
+            </div>
+            <div id="logs-body" class="bg-black/70 backdrop-blur-sm overflow-y-auto font-mono p-2 space-y-0.5" style="max-height:300px;display:none"></div>
+            <div id="logs-footer" class="bg-black/80 backdrop-blur-sm px-3 py-1.5 flex gap-2" style="display:none">
+                <button onclick="exportCSV()" class="flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border border-white/20 text-white/70 hover:text-white hover:border-white/50 transition-colors">Export</button>
+                <button onclick="document.getElementById('logs-body').innerHTML='';" class="flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border border-white/20 text-white/70 hover:text-white hover:border-white/50 transition-colors">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Controls -->
+    <footer class="border-t border-slate-200 px-4 py-2.5 flex items-center justify-between bg-white">
+        <div class="flex gap-2">
+            <button onclick="btnStart()" id="btn-start" class="bg-primary text-white px-5 py-2 font-bold uppercase tracking-widest text-[11px] flex items-center gap-2 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">
+                <span class="material-symbols-outlined text-sm" id="start-icon">play_arrow</span><span id="start-label">Start</span>
+            </button>
+            <button onclick="btnPause()" id="btn-pause" class="border border-slate-200 px-5 py-2 font-bold uppercase tracking-widest text-[11px] flex items-center gap-2 hover:bg-slate-50">
+                <span class="material-symbols-outlined text-sm" id="pause-icon">pause</span><span id="pause-label">Pause</span>
+            </button>
+            <button onclick="btnReset()" class="border border-slate-200 px-5 py-2 font-bold uppercase tracking-widest text-[11px] flex items-center gap-2 hover:bg-slate-50">
+                <span class="material-symbols-outlined text-sm">refresh</span> Reset
+            </button>
+            <button onclick="btnRandomizeMap()" id="btn-randomize" class="border border-slate-200 px-5 py-2 font-bold uppercase tracking-widest text-[11px] flex items-center gap-2 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                <span class="material-symbols-outlined text-sm">shuffle</span> Randomize Map
+            </button>
+        </div>
+        <div class="flex gap-2">
+            <button id="btn-edit" onclick="toggleEditMode()" class="border border-slate-200 px-5 py-2 font-bold uppercase tracking-widest text-[11px] flex items-center gap-2 hover:bg-slate-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                <span class="material-symbols-outlined text-sm">edit</span> Edit Mode
+            </button>
+            <button onclick="btnObstacle()" id="btn-obstacle" class="border border-primary px-5 py-2 font-bold uppercase tracking-widest text-[11px] flex items-center gap-2 hover:bg-primary hover:text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                <span class="material-symbols-outlined text-sm">warning</span> Add Obstacle
+            </button>
+        </div>
+    </footer>
+</div>
+</main>
+
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   CONSTANTS & STATE
+   ═══════════════════════════════════════════════════════════════════════════ */
+const GW=50, GH=50, CELL=1;
+const DRONE_CFG=[
+    {id:0,name:'ALPHA',  color:0x000000, start:[5,5,1],  goal:[45,45,1], active:true},
+    {id:1,name:'BRAVO',  color:0x6366f1, start:[5,45,1], goal:[45,5,1], active:true},
+    {id:2,name:'CHARLIE',color:0x059669, start:[25,5,1], goal:[25,45,1], active:true},
+];
+const COLOR_HEX=['#000000','#6366f1','#059669'];
+const SESSION_ID = 'ses_' + Math.random().toString(36).slice(2,10);
+
+const P = { hWeight:1, sDegree:3, sSmooth:3, nPoints:120 };
+let grid=[], obstacles=[];
+let droneResults=[], simState='idle', animStep=0, animId=null;
+let animSpeed=1.0;
+let editMode=false, editDroneIdx=0;
+let terrainHeights=[], terrainMesh=null;
+let is3D=true; // 3D/2D toggle
+let followDrone=-1; // -1 = no follow
+let debounceTimer=null;
+let currentAlgorithm='rrt_star';
+let isPaused=false;
+let maxFrames=120;
+let planningTimerInterval=null;
+let planningStartTime=0;
+let lastSimulationId=null;
+let historyOpen=false;
+let selectedHistoryIds=[];
+let comparePathLines=[];
+
+// Three.js
+let scene, camera, renderer, controls, raycaster, mouse;
+let droneMeshes=[], pathLines=[], obstacleMeshes=[], markerMeshes=[];
+let groundMesh;
+let orthoCamera; // for 2D mode
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TOAST NOTIFICATIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+function showToast(msg, type='info'){
+    const container=document.getElementById('toast-container');
+    const colors={info:'bg-slate-800',success:'bg-green-600',warn:'bg-yellow-500 text-black',error:'bg-red-600'};
+    const el=document.createElement('div');
+    el.className=`toast px-4 py-2.5 text-[11px] font-bold text-white ${colors[type]||colors.info} shadow-lg flex items-center gap-2`;
+    el.innerHTML=`<span class="material-symbols-outlined text-sm">${type==='success'?'check_circle':type==='warn'?'warning':type==='error'?'error':'info'}</span>${msg}`;
+    container.appendChild(el);
+    setTimeout(()=>{el.classList.replace('toast','toast-out');setTimeout(()=>el.remove(),300)},3000);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THREE.JS SETUP
+   ═══════════════════════════════════════════════════════════════════════════ */
+function initThree(){
+    const wrap=document.getElementById('canvas-wrap');
+    const W=wrap.clientWidth, H=wrap.clientHeight;
+
+    scene=new THREE.Scene();
+    scene.background=new THREE.Color(0xf8fafc);
+    scene.fog=new THREE.Fog(0xf8fafc,80,150);
+
+    camera=new THREE.PerspectiveCamera(50,W/H,0.1,500);
+    camera.position.set(25,50,60);
+    camera.lookAt(25,0,25);
+
+    // Ortho camera for 2D mode
+    const aspect=W/H;
+    orthoCamera=new THREE.OrthographicCamera(-30*aspect,30*aspect,30,-30,0.1,500);
+    orthoCamera.position.set(25,80,25);
+    orthoCamera.lookAt(25,0,25);
+
+    renderer=new THREE.WebGLRenderer({canvas:document.getElementById('c3d'),antialias:true});
+    renderer.setSize(W,H);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.shadowMap.enabled=true;
+    renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+
+    controls=new THREE.OrbitControls(camera,renderer.domElement);
+    controls.target.set(25,0,25);
+    controls.enableDamping=true;
+    controls.dampingFactor=0.08;
+    controls.maxPolarAngle=Math.PI/2.05;
+    controls.minDistance=5;
+    controls.maxDistance=200;
+    // Blender-style: middle-mouse=orbit, shift+middle=pan, scroll=zoom
+    controls.mouseButtons={LEFT:THREE.MOUSE.ROTATE, MIDDLE:THREE.MOUSE.PAN, RIGHT:THREE.MOUSE.PAN};
+    controls.enablePan=true;
+    controls.screenSpacePanning=true;
+    controls.panSpeed=1.2;
+    controls.rotateSpeed=0.8;
+    controls.zoomSpeed=1.5;
+    controls.update();
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff,0.6));
+    const dir=new THREE.DirectionalLight(0xffffff,0.8);
+    dir.position.set(30,50,40);
+    dir.castShadow=true;
+    dir.shadow.mapSize.set(2048,2048);
+    dir.shadow.camera.left=-60;dir.shadow.camera.right=60;
+    dir.shadow.camera.top=60;dir.shadow.camera.bottom=-60;
+    scene.add(dir);
+
+    raycaster=new THREE.Raycaster();
+    mouse=new THREE.Vector2();
+
+    generateTerrain();
+
+    const gridHelper=new THREE.GridHelper(GW,GW,0xd1d5db,0xe5e7eb);
+    gridHelper.position.set(GW/2,0.01,GH/2);
+    scene.add(gridHelper);
+
+    // Drone meshes — detailed quadcopter model
+    DRONE_CFG.forEach((d,i)=>{
+        const group=new THREE.Group();
+
+        // Central body (flattened octagonal shape)
+        const bodyGeo=new THREE.CylinderGeometry(0.45,0.35,0.25,8);
+        const bodyMat=new THREE.MeshStandardMaterial({color:d.color,metalness:0.5,roughness:0.3});
+        const body=new THREE.Mesh(bodyGeo,bodyMat);
+        body.position.y=1.0;body.castShadow=true;group.add(body);
+
+        // Upper canopy (dome)
+        const canopyGeo=new THREE.SphereGeometry(0.3,8,6,0,Math.PI*2,0,Math.PI/2);
+        const canopyMat=new THREE.MeshStandardMaterial({color:d.color,metalness:0.6,roughness:0.2});
+        const canopy=new THREE.Mesh(canopyGeo,canopyMat);
+        canopy.position.y=1.12;canopy.castShadow=true;group.add(canopy);
+
+        // Bottom plate
+        const plateMat=new THREE.MeshStandardMaterial({color:0x222222,metalness:0.4,roughness:0.5});
+        const plate=new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,0.06,8),plateMat);
+        plate.position.y=0.87;group.add(plate);
+
+        // 4 Arms + motors + propellers
+        const armMat=new THREE.MeshStandardMaterial({color:0x444444,metalness:0.5,roughness:0.4});
+        const motorMat=new THREE.MeshStandardMaterial({color:0x222222,metalness:0.7,roughness:0.3});
+        const propMat=new THREE.MeshStandardMaterial({color:0x888888,metalness:0.3,roughness:0.5,transparent:true,opacity:0.7});
+
+        for(let r=0;r<4;r++){
+            const angle=r*Math.PI/2 + Math.PI/4; // 45° offset for X configuration
+
+            // Arm
+            const arm=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.06,0.9),armMat);
+            arm.position.set(Math.cos(angle)*0.55,1.0,Math.sin(angle)*0.55);
+            arm.rotation.y=-angle;arm.castShadow=true;group.add(arm);
+
+            // Motor housing
+            const motor=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.14,0.18,8),motorMat);
+            motor.position.set(Math.cos(angle)*1.0,1.1,Math.sin(angle)*1.0);
+            motor.castShadow=true;group.add(motor);
+
+            // Propeller (two blades as thin boxes)
+            const propGroup=new THREE.Group();
+            propGroup.position.set(Math.cos(angle)*1.0,1.22,Math.sin(angle)*1.0);
+
+            const blade1=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.02,0.1),propMat);
+            propGroup.add(blade1);
+            const blade2=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.02,0.7),propMat);
+            propGroup.add(blade2);
+
+            // Spinning disc (subtle motion blur effect)
+            const discGeo=new THREE.CylinderGeometry(0.38,0.38,0.01,16);
+            const discMat=new THREE.MeshStandardMaterial({color:0xaaaaaa,transparent:true,opacity:0.15});
+            const disc=new THREE.Mesh(discGeo,discMat);
+            propGroup.add(disc);
+
+            propGroup.userData.isPropeller=true;
+            propGroup.userData.spinDir=r%2===0?1:-1; // alternate CW/CCW
+            group.add(propGroup);
+        }
+
+        // Landing gear (4 small legs)
+        const legMat=new THREE.MeshStandardMaterial({color:0x333333,metalness:0.4,roughness:0.6});
+        for(let l=0;l<4;l++){
+            const la=l*Math.PI/2;
+            const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,0.35,4),legMat);
+            leg.position.set(Math.cos(la)*0.35,0.7,Math.sin(la)*0.35);
+            group.add(leg);
+            // Foot
+            const foot=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.03,0.04),legMat);
+            foot.position.set(Math.cos(la)*0.35,0.52,Math.sin(la)*0.35);
+            group.add(foot);
+        }
+
+        // LED glow
+        const glow=new THREE.PointLight(d.color,0.6,10);glow.position.y=0.8;group.add(glow);
+
+        // Store hover offset for animation
+        group.userData.hoverOffset=Math.random()*Math.PI*2;
+        group.userData.targetPos=new THREE.Vector3(d.start[0]+0.5,d.start[2],d.start[1]+0.5);
+        group.position.set(d.start[0]+0.5,d.start[2],d.start[1]+0.5);
+        scene.add(group);droneMeshes.push(group);
+    });
+
+    window.addEventListener('resize',()=>{
+        const w2=wrap.clientWidth,h2=wrap.clientHeight;
+        camera.aspect=w2/h2;camera.updateProjectionMatrix();
+        const a2=w2/h2;
+        orthoCamera.left=-30*a2;orthoCamera.right=30*a2;orthoCamera.updateProjectionMatrix();
+        renderer.setSize(w2,h2);
+    });
+
+    renderer.domElement.addEventListener('click',onCanvasClick);
+    renderer.domElement.addEventListener('contextmenu',onCanvasRightClick);
+    animate3D();
+}
+
+function getActiveCamera(){ return is3D ? camera : orthoCamera; }
+
+function animate3D(){
+    requestAnimationFrame(animate3D);
+    const cam=getActiveCamera();
+    if(is3D) controls.update();
+    const t=performance.now()*0.001;
+
+    // Follow drone
+    if(followDrone>=0 && followDrone<droneMeshes.length){
+        const dp=droneMeshes[followDrone].position;
+        controls.target.set(dp.x,dp.y,dp.z);
+    }
+
+    droneMeshes.forEach(g=>{
+        // Spin propellers fast
+        g.children.forEach(c=>{
+            if(c.userData.isPropeller){
+                c.rotation.y+=0.4*c.userData.spinDir;
+            }
+        });
+
+        // Smooth interpolation to target position
+        if(g.userData.targetPos){
+            const lerpFactor=0.08;
+            g.position.x+=(g.userData.targetPos.x-g.position.x)*lerpFactor;
+            g.position.y+=(g.userData.targetPos.y-g.position.y)*lerpFactor;
+            g.position.z+=(g.userData.targetPos.z-g.position.z)*lerpFactor;
+
+            // Tilt drone in direction of movement
+            const dx=g.userData.targetPos.x-g.position.x;
+            const dz=g.userData.targetPos.z-g.position.z;
+            const tiltAmount=0.15;
+            g.rotation.z=-dx*tiltAmount; // tilt left/right
+            g.rotation.x=dz*tiltAmount;  // tilt forward/back
+        }
+
+        // Subtle hover wobble
+        const hover=g.userData.hoverOffset||0;
+        g.position.y+=Math.sin(t*2.5+hover)*0.003;
+    });
+
+    renderer.render(scene,cam);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3D / 2D TOGGLE
+   ═══════════════════════════════════════════════════════════════════════════ */
+function toggle3DMode(){
+    is3D=!is3D;
+    const btn=document.getElementById('btn-3d-mode');
+    if(is3D){
+        btn.textContent='3D MODE';
+        controls.enableRotate=true;
+        controls.maxPolarAngle=Math.PI/2.1;
+    }else{
+        btn.textContent='2D MODE';
+        controls.enableRotate=false;
+    }
+    showToast(is3D?'Switched to 3D perspective':'Switched to 2D top-down','info');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALGORITHM DROPDOWN
+   ═══════════════════════════════════════════════════════════════════════════ */
+function toggleAlgoDropdown(e){
+    e.stopPropagation();
+    document.getElementById('algo-dropdown').classList.toggle('open');
+}
+function switchAlgorithm(algo,e){
+    e.stopPropagation();
+    currentAlgorithm=algo;
+    document.querySelectorAll('.algo-option').forEach(el=>{
+        el.classList.toggle('active',el.dataset.algo===algo);
+    });
+    const names={rrt_star:'RRT*',astar:'A*',dijkstra:'Dijkstra'};
+    document.getElementById('algo-label').textContent=names[algo]+' + B-Spline Smoothing';
+    document.getElementById('algo-dropdown').classList.remove('open');
+    if(ws&&ws.readyState===WebSocket.OPEN){
+        wsSend({command:'switch_algorithm',algorithm:algo});
+    }
+    showToast('Switched to '+names[algo],'success');
+}
+document.addEventListener('click',()=>document.getElementById('algo-dropdown')?.classList.remove('open'));
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OBSTACLES
+   ═══════════════════════════════════════════════════════════════════════════ */
+function generateObstacles(){
+    grid=Array.from({length:GH},()=>new Uint8Array(GW));
+    obstacles=[];
+    obstacleMeshes.forEach(m=>scene.remove(m));
+    obstacleMeshes=[];
+}
+function isSafe(x,y){for(const d of DRONE_CFG){if(Math.abs(x-d.start[0])<=3&&Math.abs(y-d.start[1])<=3)return true;if(Math.abs(x-d.goal[0])<=3&&Math.abs(y-d.goal[1])<=3)return true;}return false;}
+function randn(){return Math.sqrt(-2*Math.log(Math.random()))*Math.cos(2*Math.PI*Math.random());}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3D PATH DRAWING
+   ═══════════════════════════════════════════════════════════════════════════ */
+function clearPaths(){pathLines.forEach(l=>scene.remove(l));pathLines=[];}
+function drawPath3D(path,colorHex){
+    if(!path||path.length<2)return;
+    const points=path.map(p=>new THREE.Vector3(p[0]+0.5,p[2],p[1]+0.5));
+    const curve=new THREE.CatmullRomCurve3(points);
+    const curvePoints=curve.getPoints(100);
+    const geo=new THREE.BufferGeometry().setFromPoints(curvePoints);
+    const mat=new THREE.LineBasicMaterial({color:new THREE.Color(colorHex),linewidth:2,transparent:true,opacity:0.6});
+    const line=new THREE.Line(geo,mat);scene.add(line);pathLines.push(line);
+    const tubeGeo=new THREE.TubeGeometry(curve,80,0.12,8,false);
+    const tubeMat=new THREE.MeshStandardMaterial({color:new THREE.Color(colorHex),transparent:true,opacity:0.35,roughness:0.5});
+    const tube=new THREE.Mesh(tubeGeo,tubeMat);scene.add(tube);pathLines.push(tube);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UI RENDERING
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderParams(){
+    const defs=[
+        {key:'hWeight',label:'Heuristic Weight',min:1,max:5,step:1,wsKey:'heuristic_weight',parser:'parseInt'},
+        {key:'sDegree',label:'Spline Degree',min:1,max:5,step:1,wsKey:'spline_degree',parser:'parseInt'},
+        {key:'sSmooth',label:'Spline Smoothness',min:0,max:10,step:1,wsKey:'spline_smoothness',parser:'parseInt'},
+        {key:'nPoints',label:'Output Resolution',min:20,max:300,step:10,wsKey:'output_resolution',parser:'parseInt'},
+    ];
+    document.getElementById('params-panel').innerHTML=defs.map(d=>`
+        <div class="space-y-1.5">
+            <div class="flex justify-between items-end">
+                <label class="text-[10px] font-medium uppercase text-slate-500">${d.label}</label>
+                <span class="text-xs font-bold" id="pv-${d.key}">${P[d.key]}</span>
+            </div>
+            <input type="range" min="${d.min}" max="${d.max}" step="${d.step}" value="${P[d.key]}"
+                oninput="onParamChange('${d.key}','${d.wsKey}',this.value,${d.parser==='parseInt'})"/>
+        </div>`).join('');
+}
+
+function onParamChange(key,wsKey,val,isInt){
+    P[key]=isInt?parseInt(val):parseFloat(val);
+    document.getElementById('pv-'+key).textContent=val;
+    clearTimeout(debounceTimer);
+    debounceTimer=setTimeout(()=>{
+        const msg={command:'update_params'};
+        msg[wsKey]=P[key];
+        wsSend(msg);
+    },300);
+}
+
+function renderFleet(completions){
+    const statuses=['IDLE','PLANNING','FLYING','DONE'];
+    document.getElementById('fleet-panel').innerHTML=DRONE_CFG.map((d,i)=>{
+        const pct=completions?completions[i]:0;
+        const r=droneResults[i];
+        let st='IDLE';
+        if(!d.active) st='DISABLED';
+        else if(simState==='planning') st='PLANNING';
+        else if(simState==='running'&&pct<100) st='FLYING';
+        else if(pct>=100) st='DONE';
+        
+        const stColors={IDLE:'border-slate-400 text-slate-400',PLANNING:'border-yellow-500 text-yellow-600',FLYING:'border-indigo-500 text-indigo-600',DONE:'border-green-500 text-green-600',DISABLED:'border-slate-200 text-slate-300'};
+        const sc=stColors[st]||stColors.IDLE;
+        const isFollow=followDrone===i;
+        const opc = d.active ? 'opacity-100' : 'opacity-40';
+
+        return`
+        <div class="p-3 border ${isFollow?'border-indigo-500 bg-indigo-50/50':'border-slate-200'} hover:border-primary transition-colors ${opc}" onclick="focusDrone(${i})">
+            <div class="flex justify-between items-start mb-2">
+                <div class="flex items-center gap-2">
+                    <span class="size-3 rounded-full" style="background:${COLOR_HEX[i]}"></span>
+                    <h3 class="font-bold text-xs tracking-tight">${d.name}</h3>
+                    <div class="ml-2 relative inline-flex items-center cursor-pointer" onclick="toggleDrone(${i}, event)">
+                        <span class="material-symbols-outlined text-[14px] ${d.active?'text-green-500':'text-slate-300'}">${d.active?'toggle_on':'toggle_off'}</span>
+                    </div>
+                </div>
+                <span class="text-[9px] font-bold px-1.5 py-0.5 border ${sc}">${st}</span>
+            </div>
+            <div class="space-y-1">
+                <div class="flex justify-between text-[9px] font-bold uppercase"><span>Progress</span><span>${Math.round(pct)}%</span></div>
+                <div class="h-1 w-full bg-slate-100"><div class="h-full transition-all duration-200" style="width:${pct}%;background:${COLOR_HEX[i]}"></div></div>
+                ${r&&d.active?`<div class="flex justify-between text-[9px] text-slate-400 mt-1"><span>Dist: ${r.distance.toFixed(1)}m</span><span>E: ${r.energy.toFixed(1)}</span><span>Col: ${r.collisions}</span></div>`:''}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function focusDrone(idx){
+    if(!DRONE_CFG[idx].active) return;
+    followDrone=followDrone===idx?-1:idx;
+    if(followDrone>=0){
+        const dp=droneMeshes[followDrone].position;
+        controls.target.set(dp.x,dp.y,dp.z);
+    }else{
+        controls.target.set(25,0,25);
+    }
+    renderFleet(lastCompletions);
+}
+
+function toggleDrone(idx, event){
+    event.stopPropagation();
+    if(simState==='planning' || simState==='running') return; // Cannot toggle while running
+    DRONE_CFG[idx].active = !DRONE_CFG[idx].active;
+    const mesh = droneMeshes[idx];
+    if(mesh) mesh.visible = DRONE_CFG[idx].active;
+    renderFleet(lastCompletions);
+}
+let lastCompletions=[0,0,0];
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   WEBSOCKET CONNECTION
+   ═══════════════════════════════════════════════════════════════════════════ */
+let ws=null;
+
+function wsSend(obj){
+    obj.session_id=SESSION_ID;
+    if(ws&&ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+function connectWebSocket(){
+    if(ws) ws.close();
+    const wsProto=window.location.protocol==='https:'?'wss://':'ws://';
+    ws=new WebSocket(wsProto+window.location.host+'/ws');
+
+    ws.onopen=()=>{
+        document.getElementById('ws-dot').className='size-2 rounded-full bg-green-500 pulse-dot';
+        document.getElementById('ws-status-text').textContent='LIVE PYTHON FASTAPI • WEBSOCKET STREAM';
+        log('SYSTEM','Connected to backend.','green');
+        showToast('Connected to server','success');
+    };
+
+    ws.onmessage=(event)=>{
+        const data=JSON.parse(event.data);
+
+        if(data.type==='init'){
+            grid=Array.from({length:GH},()=>new Uint8Array(GW));
+            obstacleMeshes.forEach(m=>scene.remove(m));obstacleMeshes=[];
+            obstacles=data.obstacles;
+            obstacles.forEach(o=>{
+                if(o.y<GH&&o.x<GW){
+                    grid[o.y][o.x]=o.h;
+                    const th=getTerrainH(o.x,o.y);const h=o.h;
+                    const mesh=new THREE.Mesh(new THREE.BoxGeometry(CELL*0.9,h,CELL*0.9),new THREE.MeshStandardMaterial({color:0x1e293b,roughness:0.7}));
+                    mesh.position.set(o.x+0.5,th+h/2,o.y+0.5);mesh.castShadow=true;mesh.receiveShadow=true;
+                    mesh.userData={gx:o.x,gy:o.y,gh:o.h};
+                    scene.add(mesh);obstacleMeshes.push(mesh);
+                }
+            });
+            document.getElementById('footer-info').textContent=`Grid: ${GW}×${GH} | Obstacles: ${obstacles.length}`;
+            log('SYSTEM',`Map received: ${obstacles.length} blocks.`);
+        }
+        else if(data.type==='planning_start'){
+            simState='planning';
+            setButtonsDisabled(true);
+            document.getElementById('start-icon').outerHTML='<span class="spinner" id="start-icon"></span>';
+            document.getElementById('start-label').textContent='Planning...';
+            setStatus('Planning...','yellow');
+            startPlanningTimer();
+        }
+        else if(data.type==='planning_done'){
+            simState='running';isPaused=false;
+            document.getElementById('start-icon').outerHTML='<span class="material-symbols-outlined text-sm" id="start-icon">play_arrow</span>';
+            document.getElementById('start-label').textContent='Start';
+            setButtonsDisabled(false);
+            stopPlanningTimer();
+            if(data.simulation_id) lastSimulationId=data.simulation_id;
+        }
+        else if(data.type==='update'){
+            if(isPaused) return;
+            clearPaths();
+            const completions=[];
+            maxFrames=data.max_frames||120;
+            data.drones.forEach((dData,i)=>{
+                const path=dData.best_path;
+                if(path&&path.length>0){
+                    const lastPos=path[path.length-1];
+                    const th=getTerrainH(Math.round(lastPos[0]),Math.round(lastPos[1]));
+                    droneMeshes[i].userData.targetPos.set(lastPos[0]+0.5,th+lastPos[2],lastPos[1]+0.5);
+                    drawPath3D(path,COLOR_HEX[i]);
+                    droneResults[i]={path,energy:dData.energy,distance:dData.distance||0,fitness:dData.fitness,collisions:dData.collisions};
+                }
+                const pct=Math.min(100,(data.iteration/maxFrames)*100);
+                completions.push(pct);
+            });
+            lastCompletions=completions;
+            renderFleet(completions);
+        }
+        else if(data.type==='complete'){
+            simState='done';
+            setStatus('Complete','green');
+            lastCompletions=[100,100,100];
+            renderFleet([100,100,100]);
+            log('SYSTEM','All drones reached goals. Simulation complete.');
+            if(data.summary) showStatsOverlay(data.summary, data.planning_time, data.simulation_id);
+            if(historyOpen) refreshHistory();
+        }
+        else if(data.type==='algorithm_switched'){
+            document.getElementById('algo-label').textContent=data.label;
+        }
+        else if(data.type==='map_updated'){
+            // rebuild from new obstacles
+            obstacleMeshes.forEach(m=>scene.remove(m));obstacleMeshes=[];
+            grid=Array.from({length:GH},()=>new Uint8Array(GW));
+            obstacles=data.obstacles;
+            obstacles.forEach(o=>{
+                if(o.y<GH&&o.x<GW){
+                    grid[o.y][o.x]=o.h;
+                    const h=o.h;
+                    const mesh=new THREE.Mesh(new THREE.BoxGeometry(CELL*0.9,h,CELL*0.9),new THREE.MeshStandardMaterial({color:0x1e293b,roughness:0.7}));
+                    mesh.position.set(o.x+0.5,h/2,o.y+0.5);mesh.castShadow=true;
+                    mesh.userData={gx:o.x,gy:o.y,gh:o.h};
+                    scene.add(mesh);obstacleMeshes.push(mesh);
+                }
+            });
+        }
+        else if(data.type==='log'){
+            log(data.source,data.msg,data.level||'info');
+        }
+        else if(data.type==='comparison'){
+            renderComparison(data);
+        }
+        else if(data.type==='pong'){}
+    };
+
+    ws.onclose=()=>{
+        document.getElementById('ws-dot').className='size-2 rounded-full bg-red-500';
+        document.getElementById('ws-status-text').textContent='RECONNECTING...';
+        log('SYSTEM','Disconnected. Reconnecting...','warn');
+        showToast('Disconnected from server','error');
+        setTimeout(connectWebSocket,3000);
+    };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BUTTON STATE MANAGEMENT
+   ═══════════════════════════════════════════════════════════════════════════ */
+function setButtonsDisabled(disabled){
+    document.getElementById('btn-start').disabled=disabled;
+    document.getElementById('btn-randomize').disabled=disabled;
+    document.getElementById('btn-edit').disabled=disabled;
+    document.getElementById('btn-obstacle').disabled=disabled;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BUTTONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+function btnStart(){
+    if(simState==='planning') return;
+    if(!ws||ws.readyState!==WebSocket.OPEN){
+        log('WARNING','Not connected to server!','warn');
+        connectWebSocket(); return;
+    }
+    
+    const activeDrones = DRONE_CFG.filter(d => d.active).map(d => d.id);
+    if(activeDrones.length === 0){
+        showToast('Please enable at least one drone', 'warn');
+        return;
+    }
+
+    simState='running';isPaused=false;
+    setStatus('Optimizing...','yellow');
+    log('SYSTEM','Running RRT* on current map...');
+    clearPaths();
+    droneResults=Array(DRONE_CFG.length).fill(null);
+    DRONE_CFG.forEach((d,i)=>{
+        droneMeshes[i].position.set(d.start[0]+0.5,d.start[2],d.start[1]+0.5);
+        droneMeshes[i].userData.targetPos.set(d.start[0]+0.5,d.start[2],d.start[1]+0.5);
+    });
+    // Reset pause button
+    document.getElementById('pause-icon').textContent='pause';
+    document.getElementById('pause-label').textContent='Pause';
+    wsSend({command:'start_simulation', active_drones: activeDrones});
+}
+
+function btnPause(){
+    if(simState!=='running'&&simState!=='done') return;
+    isPaused=!isPaused;
+    if(isPaused){
+        document.getElementById('pause-icon').textContent='play_arrow';
+        document.getElementById('pause-label').textContent='Resume';
+        setStatus('Paused','yellow');
+        log('SYSTEM','Animation paused.');
+    }else{
+        document.getElementById('pause-icon').textContent='pause';
+        document.getElementById('pause-label').textContent='Pause';
+        setStatus('Playing','green');
+        log('SYSTEM','Animation resumed.');
+    }
+}
+
+function btnReset(){
+    simState='idle';isPaused=false;animStep=0;
+    if(animId) cancelAnimationFrame(animId);
+    droneResults=[];clearPaths();
+    DRONE_CFG.forEach((d,i)=>{
+        droneMeshes[i].position.set(d.start[0]+0.5,d.start[2],d.start[1]+0.5);
+        droneMeshes[i].userData.targetPos.set(d.start[0]+0.5,d.start[2],d.start[1]+0.5);
+    });
+    lastCompletions=[0,0,0];
+    renderFleet();
+    document.getElementById('pause-icon').textContent='pause';
+    document.getElementById('pause-label').textContent='Pause';
+    document.getElementById('start-icon').outerHTML='<span class="material-symbols-outlined text-sm" id="start-icon">play_arrow</span>';
+    document.getElementById('start-label').textContent='Start';
+    setButtonsDisabled(false);
+    setStatus('Ready','slate-400');
+    log('SYSTEM','Reset. Map preserved.');
+}
+
+function btnRandomizeMap(){
+    if(!ws||ws.readyState!==WebSocket.OPEN){log('WARNING','Not connected!','warn');return;}
+    simState='idle';clearPaths();droneResults=[];
+    DRONE_CFG.forEach((d,i)=>{
+        droneMeshes[i].position.set(d.start[0]+0.5,d.start[2],d.start[1]+0.5);
+        droneMeshes[i].userData.targetPos.set(d.start[0]+0.5,d.start[2],d.start[1]+0.5);
+    });
+    lastCompletions=[0,0,0];renderFleet();
+    wsSend({command:'randomize_map'});
+    showToast('Generating new city...','info');
+}
+
+function btnObstacle(){
+    if(simState==='planning') return;
+    const bx=10+Math.random()*30|0, by=10+Math.random()*30|0;
+    const h=3;
+    for(let dx=0;dx<3;dx++)for(let dy=0;dy<3;dy++){
+        const ox=bx+dx,oy=by+dy;
+        if(ox<GW&&oy<GH){
+            grid[oy][ox]=h;obstacles.push({x:ox,y:oy,h});
+            const m=new THREE.Mesh(new THREE.BoxGeometry(.9,h,.9),new THREE.MeshStandardMaterial({color:0xdc2626,roughness:.5}));
+            m.position.set(ox+.5,h/2,oy+.5);m.castShadow=true;
+            m.userData={gx:ox,gy:oy,gh:h};
+            scene.add(m);obstacleMeshes.push(m);
+            wsSend({command:'add_obstacle',x:ox,y:oy,h});
+        }
+    }
+    log('WARNING',`Dynamic obstacle cluster at (${bx},${by})!`,'warn');
+    document.getElementById('footer-info').textContent=`Grid: ${GW}×${GH} | Obstacles: ${obstacles.length}`;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HELPERS
+   ═══════════════════════════════════════════════════════════════════════════ */
+function setStatus(t,c){
+    const dot=c==='green'?'bg-green-500':c==='yellow'?'bg-yellow-500':'bg-slate-400';
+    document.getElementById('hdr-status').innerHTML=`<span class="size-2 rounded-full ${dot} ${c==='green'?'pulse-dot':''}"></span><span class="text-xs font-semibold uppercase tracking-widest">${t}</span>`;
+}
+function log(src,msg,level='info'){
+    const c=document.getElementById('logs-body');
+    const ts=new Date().toTimeString().slice(0,8);
+    const w=level==='warn';
+    const div=document.createElement('div');
+    div.className=`text-[10px] p-1.5 border-l-2 ${w?'border-red-500 bg-red-900/30':'border-white/20'} log-entry anim-in cursor-default text-white/80`;
+    div.innerHTML=`<span class="text-white/40">[${ts}]</span> <span class="font-bold ${w?'text-red-400':'text-indigo-300'} ml-1">${src}:</span> ${msg}`;
+    c.appendChild(div);c.scrollTop=c.scrollHeight;
+}
+function toggleSidebar(){
+    const drawer=document.getElementById('sidebar-drawer');
+    const backdrop=document.getElementById('sidebar-backdrop');
+    const icon=document.getElementById('sidebar-icon');
+    const isOpen=drawer.classList.contains('open');
+    drawer.classList.toggle('open');
+    backdrop.classList.toggle('open');
+    icon.textContent=isOpen?'menu':'close';
+}
+function toggleLogsPanel(){
+    const body=document.getElementById('logs-body');
+    const footer=document.getElementById('logs-footer');
+    const icon=document.getElementById('logs-toggle-icon');
+    const open=body.style.display==='none';
+    body.style.display=open?'block':'none';
+    footer.style.display=open?'flex':'none';
+    icon.textContent=open?'expand_less':'expand_more';
+}
+function exportCSV(){
+    const rows=[];document.querySelectorAll('#logs-body .log-entry').forEach(el=>rows.push(el.textContent.trim()));
+    const blob=new Blob([rows.join('\n')],{type:'text/csv'});const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);a.download=`rrt_log_${Date.now()}.csv`;a.click();
+    log('SYSTEM','Log exported.');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TERRAIN
+   ═══════════════════════════════════════════════════════════════════════════ */
+function generateTerrain(){
+    if(terrainMesh){scene.remove(terrainMesh);terrainMesh=null;}
+    if(groundMesh){scene.remove(groundMesh);groundMesh=null;}
+    terrainHeights=Array.from({length:GH+1},()=>Array.from({length:GW+1},()=>0));
+    const geo=new THREE.PlaneGeometry(GW,GH);
+    const mat=new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.9});
+    terrainMesh=new THREE.Mesh(geo,mat);
+    terrainMesh.rotation.x=-Math.PI/2;
+    terrainMesh.position.set(GW/2,0,GH/2);
+    terrainMesh.receiveShadow=true;terrainMesh.name='terrain';
+    scene.add(terrainMesh);groundMesh=terrainMesh;
+}
+function getTerrainH(x,y){return 0;}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SAVE / LOAD SCENARIOS
+   ═══════════════════════════════════════════════════════════════════════════ */
+function saveScenario(){
+    const now=new Date();
+    const ts=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}`;
+    const data={
+        params:P,
+        drones:DRONE_CFG.map(d=>({id:d.id,name:d.name,start:[...d.start],goal:[...d.goal]})),
+        obstacles:obstacles.map(o=>({x:o.x,y:o.y,h:o.h||3})),
+        algorithm:currentAlgorithm,
+        animSpeed
+    };
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);a.download=`scenario_${ts}.json`;a.click();
+    showToast('Scenario saved','success');
+    log('SYSTEM','Scenario saved.');
+}
+function loadScenario(e){
+    const f=e.target.files[0];if(!f)return;
+    const reader=new FileReader();
+    reader.onload=function(ev){
+        try{
+            const data=JSON.parse(ev.target.result);
+            if(data.params) Object.assign(P,data.params);
+            if(data.drones) data.drones.forEach((d,i)=>{if(DRONE_CFG[i]){DRONE_CFG[i].start=[...d.start];DRONE_CFG[i].goal=[...d.goal];}});
+            if(data.algorithm) currentAlgorithm=data.algorithm;
+            if(data.animSpeed) animSpeed=data.animSpeed;
+            renderParams();
+            obstacleMeshes.forEach(m=>scene.remove(m));obstacleMeshes=[];
+            grid=Array.from({length:GH},()=>new Uint8Array(GW));obstacles=[];
+            if(data.obstacles){
+                data.obstacles.forEach(o=>{
+                    const h=o.h||3;
+                    grid[o.y][o.x]=h;obstacles.push({x:o.x,y:o.y,h});
+                    const m=new THREE.Mesh(new THREE.BoxGeometry(.9,h,.9),new THREE.MeshStandardMaterial({color:0x1e293b,roughness:.7}));
+                    m.position.set(o.x+.5,h/2,o.y+.5);m.castShadow=true;
+                    m.userData={gx:o.x,gy:o.y,gh:h};
+                    scene.add(m);obstacleMeshes.push(m);
+                });
+            }
+            rebuildMarkers();
+            DRONE_CFG.forEach((d,i)=>{
+                droneMeshes[i].position.set(d.start[0]+.5,d.start[2],d.start[1]+.5);
+                droneMeshes[i].userData.targetPos.set(d.start[0]+.5,d.start[2],d.start[1]+.5);
+            });
+            renderFleet();
+            document.getElementById('footer-info').textContent=`Grid: ${GW}×${GH} | Obstacles: ${obstacles.length}`;
+            showToast('Scenario loaded','success');
+            log('SYSTEM',`Scenario loaded: ${obstacles.length} obstacles.`);
+            // Auto re-plan
+            setTimeout(()=>btnStart(),500);
+        }catch(err){log('WARNING','Failed to parse scenario.','warn');showToast('Failed to load scenario','error');}
+    };
+    reader.readAsText(f);
+    e.target.value=''; // allow re-loading same file
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EDIT MODE — click building to cycle height
+   ═══════════════════════════════════════════════════════════════════════════ */
+let editCycle=0;
+function toggleEditMode(){
+    editMode=!editMode;
+    document.getElementById('btn-edit').classList.toggle('edit-active',editMode);
+    controls.enabled=!editMode;
+    if(editMode){
+        editCycle=0;editDroneIdx=0;
+        document.getElementById('hint-text').innerHTML='<span class="font-bold text-indigo-600">EDIT: Click building to cycle height · Click ground to place obstacle</span>';
+        log('SYSTEM','Edit mode ON.');
+    }else{
+        document.getElementById('hint-text').innerHTML='<span class="font-bold">Click + Drag</span> to rotate · <span class="font-bold">Scroll</span> to zoom';
+        controls.enabled=true;
+        log('SYSTEM','Edit mode OFF.');
+    }
+}
+function onCanvasClick(e){
+    if(!editMode) return;
+    const wrap=document.getElementById('canvas-wrap');
+    const rect=wrap.getBoundingClientRect();
+    mouse.x=((e.clientX-rect.left)/rect.width)*2-1;
+    mouse.y=-((e.clientY-rect.top)/rect.height)*2+1;
+    const cam=getActiveCamera();
+    raycaster.setFromCamera(mouse,cam);
+
+    // Check if clicked on a building
+    const buildingHits=raycaster.intersectObjects(obstacleMeshes);
+    if(buildingHits.length>0){
+        const mesh=buildingHits[0].object;
+        const ud=mesh.userData;
+        if(ud.gx!==undefined){
+            // Cycle height: 2 → 4 → 6 → remove
+            const heights=[2,4,6,0];
+            const curIdx=heights.indexOf(ud.gh);
+            const newH=heights[(curIdx+1)%heights.length];
+            if(newH===0){
+                // Remove
+                scene.remove(mesh);
+                obstacleMeshes=obstacleMeshes.filter(m=>m!==mesh);
+                grid[ud.gy][ud.gx]=0;
+                wsSend({command:'edit_building',x:ud.gx,y:ud.gy,h:0});
+                log('SYSTEM',`Building at (${ud.gx},${ud.gy}) removed.`);
+            }else{
+                // Resize
+                scene.remove(mesh);
+                obstacleMeshes=obstacleMeshes.filter(m=>m!==mesh);
+                const nm=new THREE.Mesh(new THREE.BoxGeometry(CELL*0.9,newH,CELL*0.9),new THREE.MeshStandardMaterial({color:0x1e293b,roughness:0.7}));
+                nm.position.set(ud.gx+0.5,newH/2,ud.gy+0.5);nm.castShadow=true;
+                nm.userData={gx:ud.gx,gy:ud.gy,gh:newH};
+                scene.add(nm);obstacleMeshes.push(nm);
+                grid[ud.gy][ud.gx]=newH;
+                wsSend({command:'edit_building',x:ud.gx,y:ud.gy,h:newH});
+                log('SYSTEM',`Building at (${ud.gx},${ud.gy}) → height ${newH}`);
+            }
+            return;
+        }
+    }
+
+    // Click on ground → place obstacle
+    const groundHits=raycaster.intersectObject(terrainMesh||groundMesh);
+    if(!groundHits.length) return;
+    const pt=groundHits[0].point;
+    const gx=clamp(Math.round(pt.x-0.5),0,GW-1),gy=clamp(Math.round(pt.z-0.5),0,GH-1);
+    if(!grid[gy][gx]){
+        const h=3;
+        grid[gy][gx]=h;obstacles.push({x:gx,y:gy,h});
+        const m=new THREE.Mesh(new THREE.BoxGeometry(.9,h,.9),new THREE.MeshStandardMaterial({color:0xf97316,roughness:.5}));
+        m.position.set(gx+.5,h/2,gy+.5);m.castShadow=true;
+        m.userData={gx,gy,gh:h};
+        scene.add(m);obstacleMeshes.push(m);
+        wsSend({command:'add_obstacle',x:gx,y:gy,h});
+        log('SYSTEM',`Obstacle placed at (${gx},${gy})`);
+        document.getElementById('footer-info').textContent=`Grid: ${GW}×${GH} | Obstacles: ${obstacles.length}`;
+    }
+}
+
+function onCanvasRightClick(e){
+    e.preventDefault();
+    if(!editMode)return;
+    const wrap=document.getElementById('canvas-wrap');
+    const rect=wrap.getBoundingClientRect();
+    mouse.x=((e.clientX-rect.left)/rect.width)*2-1;
+    mouse.y=-((e.clientY-rect.top)/rect.height)*2+1;
+    const cam=getActiveCamera();
+    raycaster.setFromCamera(mouse,cam);
+    const hits=raycaster.intersectObjects(obstacleMeshes);
+    if(hits.length>0){
+        const mesh=hits[0].object;
+        const ud=mesh.userData;
+        if(ud.gx!==undefined){
+            scene.remove(mesh);
+            obstacleMeshes=obstacleMeshes.filter(m=>m!==mesh);
+            grid[ud.gy][ud.gx]=0;
+            obstacles=obstacles.filter(o=>!(o.x===ud.gx&&o.y===ud.gy));
+            wsSend({command:'remove_obstacle',x:ud.gx,y:ud.gy});
+            log('SYSTEM',`Obstacle at (${ud.gx},${ud.gy}) removed.`);
+            document.getElementById('footer-info').textContent=`Grid: ${GW}×${GH} | Obstacles: ${obstacles.length}`;
+        }
+    }
+}
+
+function rebuildMarkers(){
+    markerMeshes.forEach(m=>scene.remove(m));markerMeshes=[];
+    DRONE_CFG.forEach((d,i)=>{
+        const c=d.color;
+        const sm=new THREE.Mesh(new THREE.BoxGeometry(1.2,.15,1.2),new THREE.MeshStandardMaterial({color:c,transparent:true,opacity:.4}));
+        sm.position.set(d.start[0]+.5,.08,d.start[1]+.5);scene.add(sm);markerMeshes.push(sm);
+        const gm=new THREE.Mesh(new THREE.BoxGeometry(1.2,.15,1.2),new THREE.MeshStandardMaterial({color:c,transparent:true,opacity:.8}));
+        gm.position.set(d.goal[0]+.5,.08,d.goal[1]+.5);scene.add(gm);markerMeshes.push(gm);
+        const pm=new THREE.Mesh(new THREE.CylinderGeometry(.1,.1,4,8),new THREE.MeshStandardMaterial({color:c,transparent:true,opacity:.3}));
+        pm.position.set(d.goal[0]+.5,2,d.goal[1]+.5);scene.add(pm);markerMeshes.push(pm);
+    });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PLANNING TIMER
+   ═══════════════════════════════════════════════════════════════════════════ */
+function startPlanningTimer(){
+    planningStartTime=performance.now();
+    const el=document.getElementById('planning-timer');
+    el.classList.remove('hidden');
+    planningTimerInterval=setInterval(()=>{
+        const elapsed=((performance.now()-planningStartTime)/1000).toFixed(1);
+        document.getElementById('timer-value').textContent=elapsed+'s';
+    },100);
+}
+function stopPlanningTimer(){
+    if(planningTimerInterval){clearInterval(planningTimerInterval);planningTimerInterval=null;}
+    document.getElementById('planning-timer').classList.add('hidden');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   STATS OVERLAY  —  post-simulation results card
+   ═══════════════════════════════════════════════════════════════════════════ */
+function showStatsOverlay(summary, planTime, simId){
+    const grid=document.getElementById('stats-grid');
+    const stats=[
+        {label:'Total Distance',value:summary.total_distance?.toFixed(1)+'m',icon:'straighten',color:'text-black'},
+        {label:'Total Energy',value:summary.total_energy?.toFixed(1),icon:'bolt',color:'text-yellow-600'},
+        {label:'Collisions',value:summary.total_collisions,icon:'warning',color:summary.total_collisions>0?'text-red-600':'text-green-600'},
+        {label:'Planning Time',value:(planTime||0)+'s',icon:'timer',color:'text-indigo-600'},
+    ];
+    grid.innerHTML=stats.map(s=>`
+        <div class="p-3 border border-slate-100">
+            <div class="flex items-center gap-1 text-[9px] font-bold uppercase text-slate-400 mb-1">
+                <span class="material-symbols-outlined text-xs">${s.icon}</span>${s.label}
+            </div>
+            <div class="stat-value ${s.color}">${s.value}</div>
+        </div>`).join('');
+    document.getElementById('stats-meta').textContent=`${summary.drone_count} drone(s) · ID: ${simId||'—'}`;
+    document.getElementById('stats-overlay').classList.remove('hidden');
+}
+function closeStatsOverlay(e){
+    if(e&&e.target!==e.currentTarget) return;
+    document.getElementById('stats-overlay').classList.add('hidden');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SIMULATION HISTORY PANEL
+   ═══════════════════════════════════════════════════════════════════════════ */
+function toggleHistoryPanel(){
+    historyOpen=!historyOpen;
+    document.getElementById('history-panel').style.display=historyOpen?'block':'none';
+    document.getElementById('history-actions').style.display=historyOpen?'flex':'none';
+    document.getElementById('hist-toggle-icon').textContent=historyOpen?'expand_less':'expand_more';
+    if(historyOpen) refreshHistory();
+}
+
+async function refreshHistory(){
+    try{
+        const res=await fetch('/api/simulations');
+        const list=await res.json();
+        renderHistory(list);
+    }catch(err){
+        document.getElementById('history-panel').innerHTML='<div class="text-[10px] text-slate-400 p-2">Failed to load history.</div>';
+    }
+}
+
+function renderHistory(list){
+    const panel=document.getElementById('history-panel');
+    if(!list||list.length===0){
+        panel.innerHTML='<div class="text-[10px] text-slate-400 p-2 text-center">No simulations saved yet. Run one!</div>';
+        return;
+    }
+    const algoNames={rrt_star:'RRT*',astar:'A*',dijkstra:'Dijkstra'};
+    panel.innerHTML=list.map(s=>{
+        const ts=new Date(s.timestamp);
+        const dateStr=ts.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' '+ts.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+        const sel=selectedHistoryIds.includes(s.id);
+        const sm=s.summary||{};
+        return `
+        <div class="hist-entry p-2.5 border border-slate-200 ${sel?'selected':''}" data-id="${s.id}">
+            <div class="flex justify-between items-start">
+                <div>
+                    <div class="text-[10px] font-bold">${algoNames[s.algorithm]||s.algorithm}</div>
+                    <div class="text-[9px] text-slate-400">${dateStr} · ${(s.planning_time||0)}s</div>
+                </div>
+                <div class="flex gap-1">
+                    <button onclick="event.stopPropagation();toggleHistorySelect('${s.id}')" class="text-[9px] px-1.5 py-0.5 border ${sel?'border-indigo-400 bg-indigo-50 text-indigo-600':'border-slate-200 text-slate-400'} hover:border-indigo-400">${sel?'✓':'○'}</button>
+                    <button onclick="event.stopPropagation();replaySimulation('${s.id}')" class="text-[9px] px-1.5 py-0.5 border border-slate-200 text-slate-500 hover:border-primary hover:text-black">▶</button>
+                    <button onclick="event.stopPropagation();deleteSimulation('${s.id}')" class="text-[9px] px-1.5 py-0.5 border border-slate-200 text-red-400 hover:border-red-500 hover:text-red-600">✕</button>
+                </div>
+            </div>
+            <div class="flex gap-3 text-[9px] text-slate-400 mt-1">
+                <span>D: ${(sm.total_distance||0).toFixed(0)}m</span>
+                <span>E: ${(sm.total_energy||0).toFixed(0)}</span>
+                <span>C: ${sm.total_collisions||0}</span>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function toggleHistorySelect(id){
+    const idx=selectedHistoryIds.indexOf(id);
+    if(idx>=0) selectedHistoryIds.splice(idx,1);
+    else if(selectedHistoryIds.length<2) selectedHistoryIds.push(id);
+    else{selectedHistoryIds.shift();selectedHistoryIds.push(id);}
+    document.getElementById('btn-compare').disabled=selectedHistoryIds.length!==2;
+    refreshHistory();
+}
+
+function replaySimulation(id){
+    if(!ws||ws.readyState!==WebSocket.OPEN){showToast('Not connected','error');return;}
+    simState='running';isPaused=false;
+    clearPaths();droneResults=[];
+    DRONE_CFG.forEach((d,i)=>{
+        droneMeshes[i].position.set(d.start[0]+.5,d.start[2],d.start[1]+.5);
+        droneMeshes[i].userData.targetPos.set(d.start[0]+.5,d.start[2],d.start[1]+.5);
+    });
+    lastCompletions=[0,0,0];renderFleet();
+    wsSend({command:'load_simulation',simulation_id:id});
+    showToast('Replaying simulation...','info');
+    log('SYSTEM',`Loading simulation ${id} for replay...`);
+}
+
+async function deleteSimulation(id){
+    try{
+        await fetch(`/api/simulations/${id}`,{method:'DELETE'});
+        showToast('Simulation deleted','success');
+        refreshHistory();
+    }catch(err){
+        showToast('Failed to delete','error');
+    }
+}
+
+function compareSelected(){
+    if(selectedHistoryIds.length!==2) return;
+    if(!ws||ws.readyState!==WebSocket.OPEN){showToast('Not connected','error');return;}
+    wsSend({command:'compare_simulations',id_a:selectedHistoryIds[0],id_b:selectedHistoryIds[1]});
+    showToast('Loading comparison...','info');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMPARISON RENDERING
+   ═══════════════════════════════════════════════════════════════════════════ */
+function renderComparison(data){
+    clearComparePaths();
+    const colorsA=['#ef4444','#f97316','#eab308'];
+    const colorsB=['#3b82f6','#8b5cf6','#06b6d4'];
+    const drawGhost=(drones,colors,label)=>{
+        (drones||[]).forEach((d,i)=>{
+            if(!d.path||d.path.length<2)return;
+            const points=d.path.map(p=>new THREE.Vector3(p[0]+0.5,p[2],p[1]+0.5));
+            const curve=new THREE.CatmullRomCurve3(points);
+            const geo=new THREE.TubeGeometry(curve,60,0.18,6,false);
+            const mat=new THREE.MeshStandardMaterial({color:new THREE.Color(colors[i%colors.length]),transparent:true,opacity:0.5,roughness:0.3});
+            const tube=new THREE.Mesh(geo,mat);scene.add(tube);comparePathLines.push(tube);
+        });
+    };
+    drawGhost(data.simulation_a?.drones,colorsA,'A');
+    drawGhost(data.simulation_b?.drones,colorsB,'B');
+    const sa=data.simulation_a?.summary||{};
+    const sb=data.simulation_b?.summary||{};
+    log('SYSTEM',`Compare: A(dist:${sa.total_distance?.toFixed(0)||'?'}m, E:${sa.total_energy?.toFixed(0)||'?'}) vs B(dist:${sb.total_distance?.toFixed(0)||'?'}m, E:${sb.total_energy?.toFixed(0)||'?'})`);
+    showToast('Comparison rendered: Red=A, Blue=B','success');
+}
+function clearComparePaths(){
+    comparePathLines.forEach(m=>scene.remove(m));comparePathLines=[];
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   INIT
+   ═══════════════════════════════════════════════════════════════════════════ */
+renderParams();
+initThree();
+connectWebSocket();
+rebuildMarkers();
+renderFleet();
+log('SYSTEM','3D Dashboard loaded. Press Start to simulate.');
+</script>
+</body>
+</html>

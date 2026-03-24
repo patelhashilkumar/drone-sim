@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 import numpy as np
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+
 from fastapi.staticfiles import StaticFiles
 
 from environment import Environment
@@ -205,8 +206,8 @@ manager = ConnectionManager()
 #  REST API  —  Simulation History
 # ═══════════════════════════════════════════════════════════════════════════════
 @app.get("/")
-async def get():
-    return HTMLResponse("<body>Please go to <a href='/static/index.html'>/static/index.html</a></body>")
+async def root():
+    return RedirectResponse(url="/static/index.html")
 
 
 @app.get("/api/simulations")

@@ -27,6 +27,13 @@
     .log-entry:hover{border-left-color:#000!important;background:#fff}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}} .pulse-dot{animation:pulse 1.5s ease-in-out infinite}
     canvas{display:block}
+    /* Clustering */
+    .cluster-badge{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+    .cluster-metric{background:#f8fafc;border:1px solid #e2e8f0;padding:8px 10px}
+    .cluster-metric .cm-val{font-size:1.15rem;font-weight:800;line-height:1}
+    .cluster-metric .cm-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:2px}
+    .pca-overlay{position:fixed;inset:0;z-index:85;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.25)}
+    .pca-card{background:#fff;border:1px solid #e2e8f0;box-shadow:0 25px 50px -12px rgba(0,0,0,.25);padding:20px;width:520px;max-width:95vw;animation:fadeIn .3s ease-out}
     .edit-active{background:#6366f1!important;color:#fff!important;border-color:#6366f1!important}
     /* Toast */
     @keyframes toastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}
@@ -65,6 +72,21 @@
 
 <!-- Toast Container -->
 <div id="toast-container" class="fixed bottom-4 right-4 z-[100] flex flex-col gap-2"></div>
+
+<!-- PCA Scatter Plot Overlay (hidden by default) -->
+<div id="pca-overlay" class="pca-overlay hidden" onclick="closePCAOverlay(event)">
+    <div class="pca-card" onclick="event.stopPropagation()">
+        <div class="flex justify-between items-center mb-3">
+            <h3 class="text-sm font-bold uppercase tracking-widest flex items-center gap-2"><span class="material-symbols-outlined text-base text-indigo-600">bubble_chart</span> PCA Projection — Flight Path Clusters</h3>
+            <button onclick="closePCAOverlay()" class="text-slate-400 hover:text-black"><span class="material-symbols-outlined text-sm">close</span></button>
+        </div>
+        <canvas id="pca-canvas" width="480" height="380" style="width:100%;border:1px solid #e2e8f0;border-radius:4px;background:#fafbfc"></canvas>
+        <div class="flex justify-between items-center text-[9px] text-slate-400 mt-2">
+            <span>Each point = one drone flight path</span>
+            <span id="pca-meta"></span>
+        </div>
+    </div>
+</div>
 
 <!-- Stats Overlay Card (hidden by default) -->
 <div id="stats-overlay" class="hidden fixed inset-0 z-[80] flex items-center justify-center bg-black/20" onclick="closeStatsOverlay(event)">
@@ -135,6 +157,62 @@
         <div id="history-actions" class="flex gap-2 mt-2" style="display:none">
             <button onclick="refreshHistory()" class="flex-1 py-1.5 text-[9px] font-bold uppercase tracking-widest border border-slate-200 hover:border-primary transition-colors bg-white">Refresh</button>
             <button onclick="compareSelected()" id="btn-compare" class="flex-1 py-1.5 text-[9px] font-bold uppercase tracking-widest border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-30 bg-white" disabled>Compare</button>
+        </div>
+    </section>
+
+    <!-- ─── Unsupervised Learning ─────────────────────────── -->
+    <section class="p-4 border-b border-slate-200 bg-gradient-to-b from-indigo-50/40 to-white">
+        <h2 class="text-[10px] font-bold uppercase tracking-widest mb-3 flex items-center gap-2 text-indigo-700">
+            <span class="material-symbols-outlined text-sm">hub</span> Unsupervised Learning
+        </h2>
+
+        <!-- Algorithm Toggle -->
+        <div class="flex gap-1 mb-3">
+            <button id="cl-btn-kmeans" onclick="setClusterAlgo('kmeans')" class="flex-1 py-1.5 text-[9px] font-bold uppercase tracking-widest border border-indigo-500 bg-indigo-500 text-white transition-all">k-Means</button>
+            <button id="cl-btn-dbscan" onclick="setClusterAlgo('dbscan')" class="flex-1 py-1.5 text-[9px] font-bold uppercase tracking-widest border border-slate-200 text-slate-500 hover:border-indigo-400 transition-all">DBSCAN</button>
+        </div>
+
+        <!-- k-Means params -->
+        <div id="cl-kmeans-params" class="space-y-2 mb-3">
+            <div class="space-y-1">
+                <div class="flex justify-between items-end">
+                    <label class="text-[10px] font-medium uppercase text-slate-500">Clusters (k)</label>
+                    <span class="text-xs font-bold" id="cl-k-val">3</span>
+                </div>
+                <input type="range" min="2" max="10" step="1" value="3" id="cl-k-slider" oninput="document.getElementById('cl-k-val').textContent=this.value"/>
+            </div>
+        </div>
+
+        <!-- DBSCAN params -->
+        <div id="cl-dbscan-params" class="space-y-2 mb-3" style="display:none">
+            <div class="space-y-1">
+                <div class="flex justify-between items-end">
+                    <label class="text-[10px] font-medium uppercase text-slate-500">Epsilon (eps)</label>
+                    <span class="text-xs font-bold" id="cl-eps-val">5.0</span>
+                </div>
+                <input type="range" min="0.5" max="20" step="0.5" value="5" id="cl-eps-slider" oninput="document.getElementById('cl-eps-val').textContent=parseFloat(this.value).toFixed(1)"/>
+            </div>
+            <div class="space-y-1">
+                <div class="flex justify-between items-end">
+                    <label class="text-[10px] font-medium uppercase text-slate-500">Min Samples</label>
+                    <span class="text-xs font-bold" id="cl-ms-val">2</span>
+                </div>
+                <input type="range" min="2" max="10" step="1" value="2" id="cl-ms-slider" oninput="document.getElementById('cl-ms-val').textContent=this.value"/>
+            </div>
+        </div>
+
+        <!-- Run Button -->
+        <button onclick="runClustering()" id="cl-run-btn" class="w-full py-2 text-[10px] font-bold uppercase tracking-widest bg-indigo-600 text-white hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2">
+            <span class="material-symbols-outlined text-sm">scatter_plot</span> Run Clustering
+        </button>
+
+        <!-- Results (hidden initially) -->
+        <div id="cl-results" class="mt-3" style="display:none">
+            <div class="grid grid-cols-2 gap-1.5 mb-2" id="cl-metrics-grid"></div>
+            <div id="cl-legend" class="space-y-1 mb-2"></div>
+            <button onclick="showPCAOverlay()" class="w-full py-1.5 text-[9px] font-bold uppercase tracking-widest border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition-colors flex items-center justify-center gap-1">
+                <span class="material-symbols-outlined text-xs">bubble_chart</span> View PCA Scatter Plot
+            </button>
         </div>
     </section>
 
@@ -257,12 +335,14 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 const GW=50, GH=50, CELL=1;
 const DRONE_CFG=[
-    {id:0,name:'ALPHA',  color:0x000000, start:[5,5,1],  goal:[45,45,1], active:true},
+    {id:0,name:'ALPHA',  color:0xeab308, start:[5,5,1],  goal:[45,45,1], active:true},
     {id:1,name:'BRAVO',  color:0x6366f1, start:[5,45,1], goal:[45,5,1], active:true},
     {id:2,name:'CHARLIE',color:0x059669, start:[25,5,1], goal:[25,45,1], active:true},
 ];
-const COLOR_HEX=['#000000','#6366f1','#059669'];
+const COLOR_HEX=['#eab308','#6366f1','#059669'];
 const SESSION_ID = 'ses_' + Math.random().toString(36).slice(2,10);
+const CLUSTER_COLORS=['#6366f1','#f59e0b','#10b981','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899','#14b8a6','#a855f7'];
+const NOISE_COLOR='#94a3b8';
 
 const P = { hWeight:1, sDegree:3, sSmooth:3, nPoints:120 };
 let grid=[], obstacles=[];
@@ -282,6 +362,8 @@ let lastSimulationId=null;
 let historyOpen=false;
 let selectedHistoryIds=[];
 let comparePathLines=[];
+let clusterAlgo='kmeans';
+let clusteringData=null;
 
 // Three.js
 let scene, camera, renderer, controls, raycaster, mouse;
@@ -780,6 +862,13 @@ function connectWebSocket(){
         }
         else if(data.type==='comparison'){
             renderComparison(data);
+        }
+        else if(data.type==='clustering_result'){
+            handleClusteringResult(data);
+        }
+        else if(data.type==='clustering_error'){
+            showToast(data.error,'warn');
+            document.getElementById('cl-run-btn').innerHTML='<span class="material-symbols-outlined text-sm">scatter_plot</span> Run Clustering';
         }
         else if(data.type==='pong'){}
     };
@@ -1297,6 +1386,211 @@ function renderComparison(data){
 }
 function clearComparePaths(){
     comparePathLines.forEach(m=>scene.remove(m));comparePathLines=[];
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UNSUPERVISED LEARNING — CLUSTERING UI
+   ═══════════════════════════════════════════════════════════════════════════ */
+function setClusterAlgo(algo){
+    clusterAlgo=algo;
+    document.getElementById('cl-btn-kmeans').className = algo==='kmeans'
+        ? 'flex-1 py-1.5 text-[9px] font-bold uppercase tracking-widest border border-indigo-500 bg-indigo-500 text-white transition-all'
+        : 'flex-1 py-1.5 text-[9px] font-bold uppercase tracking-widest border border-slate-200 text-slate-500 hover:border-indigo-400 transition-all';
+    document.getElementById('cl-btn-dbscan').className = algo==='dbscan'
+        ? 'flex-1 py-1.5 text-[9px] font-bold uppercase tracking-widest border border-indigo-500 bg-indigo-500 text-white transition-all'
+        : 'flex-1 py-1.5 text-[9px] font-bold uppercase tracking-widest border border-slate-200 text-slate-500 hover:border-indigo-400 transition-all';
+    document.getElementById('cl-kmeans-params').style.display = algo==='kmeans' ? 'block' : 'none';
+    document.getElementById('cl-dbscan-params').style.display = algo==='dbscan' ? 'block' : 'none';
+}
+
+function runClustering(){
+    if(!ws||ws.readyState!==WebSocket.OPEN){showToast('Not connected','error');return;}
+    const btn=document.getElementById('cl-run-btn');
+    btn.innerHTML='<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span> Clustering...';
+    const msg={command:'cluster_paths', algorithm:clusterAlgo};
+    if(clusterAlgo==='kmeans'){
+        msg.k=parseInt(document.getElementById('cl-k-slider').value);
+    } else {
+        msg.eps=parseFloat(document.getElementById('cl-eps-slider').value);
+        msg.min_samples=parseInt(document.getElementById('cl-ms-slider').value);
+    }
+    wsSend(msg);
+    log('SYSTEM',`Running ${clusterAlgo.toUpperCase()} clustering...`);
+}
+
+function handleClusteringResult(data){
+    clusteringData=data;
+    const btn=document.getElementById('cl-run-btn');
+    btn.innerHTML='<span class="material-symbols-outlined text-sm">scatter_plot</span> Run Clustering';
+    document.getElementById('cl-results').style.display='block';
+
+    // Metrics grid
+    const mg=document.getElementById('cl-metrics-grid');
+    let metricsHTML=`
+        <div class="cluster-metric"><div class="cm-label">Clusters</div><div class="cm-val text-indigo-600">${data.n_clusters}</div></div>
+        <div class="cluster-metric"><div class="cm-label">Silhouette</div><div class="cm-val ${data.silhouette>=0.5?'text-green-600':data.silhouette>=0?'text-yellow-600':'text-red-600'}">${data.silhouette>=0?data.silhouette.toFixed(3):'N/A'}</div></div>`;
+    if(data.algorithm==='kmeans' && data.inertia!==null){
+        metricsHTML+=`<div class="cluster-metric"><div class="cm-label">Inertia (SSE)</div><div class="cm-val text-slate-700">${data.inertia.toFixed(1)}</div></div>`;
+    }
+    if(data.algorithm==='dbscan'){
+        metricsHTML+=`<div class="cluster-metric"><div class="cm-label">Noise Points</div><div class="cm-val text-slate-500">${data.noise_count}</div></div>`;
+    }
+    metricsHTML+=`<div class="cluster-metric"><div class="cm-label">Total Paths</div><div class="cm-val text-slate-700">${data.labels.length}</div></div>`;
+    mg.innerHTML=metricsHTML;
+
+    // Cluster legend
+    const legend=document.getElementById('cl-legend');
+    let legHTML='';
+    const sizes=data.cluster_sizes||{};
+    const sortedKeys=Object.keys(sizes).sort((a,b)=>parseInt(a)-parseInt(b));
+    for(const cid of sortedKeys){
+        const cidInt=parseInt(cid);
+        const color=cidInt===-1?NOISE_COLOR:CLUSTER_COLORS[cidInt%CLUSTER_COLORS.length];
+        const label=cidInt===-1?'Noise':'Cluster '+cidInt;
+        legHTML+=`<div class="flex items-center justify-between text-[10px]">
+            <div class="flex items-center gap-1"><span class="cluster-badge" style="background:${color}"></span><span class="font-bold">${label}</span></div>
+            <span class="text-slate-400 font-bold">${sizes[cid]} path${sizes[cid]>1?'s':''}</span>
+        </div>`;
+    }
+    legend.innerHTML=legHTML;
+
+    // Auto-show PCA scatter plot
+    showPCAOverlay();
+
+    showToast(`${data.algorithm.toUpperCase()}: ${data.n_clusters} clusters found`,'success');
+    log('SYSTEM',`Clustering complete: ${data.n_clusters} clusters, silhouette=${data.silhouette}`);
+}
+
+/* ─── PCA Scatter Plot (2D Canvas) ─────────────────────────────────── */
+function showPCAOverlay(){
+    if(!clusteringData||!clusteringData.pca_points||clusteringData.pca_points.length===0){
+        showToast('No clustering data available','warn');
+        return;
+    }
+    document.getElementById('pca-overlay').classList.remove('hidden');
+    drawPCAScatter();
+}
+function closePCAOverlay(e){
+    if(e&&e.target!==e.currentTarget)return;
+    document.getElementById('pca-overlay').classList.add('hidden');
+}
+
+function drawPCAScatter(){
+    const canvas=document.getElementById('pca-canvas');
+    const ctx=canvas.getContext('2d');
+    const W=canvas.width, H=canvas.height;
+    const pts=clusteringData.pca_points;
+    const pad=40;
+
+    ctx.clearRect(0,0,W,H);
+
+    // Background
+    ctx.fillStyle='#fafbfc';
+    ctx.fillRect(0,0,W,H);
+
+    // Grid lines
+    ctx.strokeStyle='#e2e8f0';
+    ctx.lineWidth=0.5;
+    for(let i=0;i<=4;i++){
+        const x=pad+(W-2*pad)*(i/4);
+        const y=pad+(H-2*pad)*(i/4);
+        ctx.beginPath();ctx.moveTo(x,pad);ctx.lineTo(x,H-pad);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(W-pad,y);ctx.stroke();
+    }
+
+    // Compute data range
+    let xMin=Infinity,xMax=-Infinity,yMin=Infinity,yMax=-Infinity;
+    for(const p of pts){
+        if(p.x<xMin)xMin=p.x;if(p.x>xMax)xMax=p.x;
+        if(p.y<yMin)yMin=p.y;if(p.y>yMax)yMax=p.y;
+    }
+    const xRange=xMax-xMin||1;
+    const yRange=yMax-yMin||1;
+    const mapX=v=>pad+(v-xMin)/xRange*(W-2*pad);
+    const mapY=v=>H-pad-(v-yMin)/yRange*(H-2*pad);
+
+    // Cluster hulls (convex fill for each cluster)
+    const clusters={};
+    for(const p of pts){
+        if(!clusters[p.label])clusters[p.label]=[];
+        clusters[p.label].push({x:mapX(p.x),y:mapY(p.y)});
+    }
+    for(const [lbl, cpts] of Object.entries(clusters)){
+        const cidInt=parseInt(lbl);
+        const color=cidInt===-1?NOISE_COLOR:CLUSTER_COLORS[cidInt%CLUSTER_COLORS.length];
+        if(cpts.length>=3){
+            // Simple convex hull visualization with alpha fill
+            ctx.fillStyle=color+'18';
+            ctx.strokeStyle=color+'40';
+            ctx.lineWidth=1;
+            // Sort by angle from centroid
+            const cx=cpts.reduce((s,p)=>s+p.x,0)/cpts.length;
+            const cy=cpts.reduce((s,p)=>s+p.y,0)/cpts.length;
+            const sorted=[...cpts].sort((a,b)=>Math.atan2(a.y-cy,a.x-cx)-Math.atan2(b.y-cy,b.x-cx));
+            ctx.beginPath();
+            ctx.moveTo(sorted[0].x,sorted[0].y);
+            for(let i=1;i<sorted.length;i++) ctx.lineTo(sorted[i].x,sorted[i].y);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
+    }
+
+    // Draw points
+    for(const p of pts){
+        const cidInt=p.label;
+        const color=cidInt===-1?NOISE_COLOR:CLUSTER_COLORS[cidInt%CLUSTER_COLORS.length];
+        const sx=mapX(p.x), sy=mapY(p.y);
+
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(sx,sy,7,0,Math.PI*2);
+        ctx.fillStyle=color+'30';
+        ctx.fill();
+
+        // Main dot
+        ctx.beginPath();
+        ctx.arc(sx,sy,4.5,0,Math.PI*2);
+        ctx.fillStyle=color;
+        ctx.fill();
+        ctx.strokeStyle='#fff';
+        ctx.lineWidth=1.5;
+        ctx.stroke();
+    }
+
+    // Axis labels
+    ctx.fillStyle='#64748b';
+    ctx.font='bold 10px sans-serif';
+    ctx.textAlign='center';
+    ctx.fillText('PCA Component 1',W/2,H-8);
+    ctx.save();
+    ctx.translate(12,H/2);
+    ctx.rotate(-Math.PI/2);
+    ctx.fillText('PCA Component 2',0,0);
+    ctx.restore();
+
+    // Title
+    ctx.fillStyle='#1e293b';
+    ctx.font='bold 12px sans-serif';
+    ctx.textAlign='left';
+    ctx.fillText(`${clusteringData.algorithm.toUpperCase()} — ${clusteringData.n_clusters} clusters, ${pts.length} paths`,pad,20);
+
+    // Legend in bottom-right
+    const legX=W-pad-10, legY=H-pad-10;
+    ctx.textAlign='right';
+    ctx.font='bold 9px sans-serif';
+    const uniqueLabels=[...new Set(pts.map(p=>p.label))].sort((a,b)=>a-b);
+    uniqueLabels.forEach((lbl,i)=>{
+        const color=lbl===-1?NOISE_COLOR:CLUSTER_COLORS[lbl%CLUSTER_COLORS.length];
+        const ly=legY-i*14;
+        ctx.fillStyle=color;
+        ctx.fillRect(legX-40,ly-4,8,8);
+        ctx.fillStyle='#475569';
+        ctx.fillText(lbl===-1?'Noise':'Cluster '+lbl,legX,ly+4);
+    });
+
+    // Meta info
+    document.getElementById('pca-meta').textContent=`Silhouette: ${clusteringData.silhouette>=0?clusteringData.silhouette.toFixed(3):'N/A'}`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

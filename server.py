@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from environment import Environment
 from planner import HybridPlanner
+from clustering import cluster_paths
 
 logger = logging.getLogger('websockets')
 logger.setLevel(logging.INFO)
@@ -225,6 +226,54 @@ async def get_simulation(sim_id: str):
     return JSONResponse(data)
 
 
+@app.get("/api/clustering")
+async def run_clustering(
+    algorithm: str = 'kmeans',
+    k: int = 3,
+    eps: float = 5.0,
+    min_samples: int = 2
+):
+    """Cluster drone flight paths across all saved simulations."""
+    # Load full simulation data (with paths) for every saved run
+    summaries = store.list_all()
+    full_sims = []
+    for s in summaries:
+        data = store.get(s['id'])
+        if data:
+            full_sims.append(data)
+
+    if len(full_sims) < 1:
+        return JSONResponse(
+            {"error": "No simulations saved yet. Run at least 3 simulations first."},
+            status_code=400
+        )
+
+    result = cluster_paths(
+        simulations=full_sims,
+        algorithm=algorithm,
+        k=k,
+        eps=eps,
+        min_samples=min_samples,
+    )
+
+    # Convert centroid_paths keys to strings for JSON serialization
+    centroid_paths_str = {str(cid): pts for cid, pts in result.centroid_paths.items()}
+    cluster_sizes_str = {str(cid): cnt for cid, cnt in result.cluster_sizes.items()}
+
+    return JSONResponse({
+        "algorithm": result.algorithm,
+        "n_clusters": result.n_clusters,
+        "labels": result.labels,
+        "silhouette": result.silhouette,
+        "inertia": result.inertia,
+        "noise_count": result.noise_count,
+        "centroid_paths": centroid_paths_str,
+        "pca_points": result.pca_points,
+        "path_records": result.path_records,
+        "cluster_sizes": cluster_sizes_str,
+    })
+
+
 @app.delete("/api/simulations/{sim_id}")
 async def delete_simulation(sim_id: str):
     """Delete a saved simulation."""
@@ -324,6 +373,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     await load_saved_simulation(websocket, session, sim_id)
 
             # ── Compare Two Simulations ───────────────────────────────
+            # ── Cluster Flight Paths ──────────────────────────────────
+            elif cmd == "cluster_paths":
+                algo = msg.get("algorithm", "kmeans")
+                k_val = int(msg.get("k", 3))
+                eps_val = float(msg.get("eps", 5.0))
+                min_samp = int(msg.get("min_samples", 2))
+                await run_clustering_ws(websocket, algo, k_val, eps_val, min_samp)
+
             elif cmd == "compare_simulations":
                 id_a = msg.get("id_a")
                 id_b = msg.get("id_b")
@@ -516,6 +573,54 @@ async def compare_simulations(websocket, id_a, id_b):
         }
     }))
     await ws_log(websocket, f"Comparison: {id_a} vs {id_b}")
+
+
+async def run_clustering_ws(websocket, algorithm, k, eps, min_samples):
+    """Run unsupervised clustering on all saved flight paths and send results."""
+    await ws_log(websocket, f"Running {algorithm.upper()} clustering...")
+
+    summaries = store.list_all()
+    full_sims = []
+    for s in summaries:
+        data = store.get(s['id'])
+        if data:
+            full_sims.append(data)
+
+    if len(full_sims) < 1:
+        await ws_log(websocket, "Not enough simulations. Run at least 3 first.", "WARNING")
+        await websocket.send_text(json.dumps({
+            "type": "clustering_error",
+            "error": "Not enough simulations saved. Run at least 3 simulations first."
+        }))
+        return
+
+    result = cluster_paths(
+        simulations=full_sims,
+        algorithm=algorithm,
+        k=k,
+        eps=eps,
+        min_samples=min_samples,
+    )
+
+    centroid_paths_str = {str(cid): pts for cid, pts in result.centroid_paths.items()}
+    cluster_sizes_str = {str(cid): cnt for cid, cnt in result.cluster_sizes.items()}
+
+    await websocket.send_text(json.dumps({
+        "type": "clustering_result",
+        "algorithm": result.algorithm,
+        "n_clusters": result.n_clusters,
+        "labels": result.labels,
+        "silhouette": result.silhouette,
+        "inertia": result.inertia,
+        "noise_count": result.noise_count,
+        "centroid_paths": centroid_paths_str,
+        "pca_points": result.pca_points,
+        "path_records": result.path_records,
+        "cluster_sizes": cluster_sizes_str,
+    }))
+
+    await ws_log(websocket, f"{algorithm.upper()}: {result.n_clusters} clusters, silhouette={result.silhouette}")
+
 
 
 if __name__ == "__main__":

@@ -1,98 +1,83 @@
-# 🚁 Multi-Drone 3D Path Optimizer
+# Multi-Drone 3D Path Optimizer
 
-A real-time multi-drone 3D path optimization simulation using **RRT\*** (Rapidly-exploring Random Tree Star) with **B-Spline** trajectory smoothing. Features an interactive Three.js dashboard with live WebSocket telemetry.
+A high-performance simulation platform for real-time multi-drone 3D path optimization. The system utilizes the RRT* (Rapidly-exploring Random Tree Star) algorithm for pathfinding and B-Spline curves for trajectory smoothing. It features an interactive Three.js dashboard with live WebSocket telemetry and unsupervised learning capabilities for flight-path analysis.
 
-🔗 **Live Demo:** [drone-sim-901y.onrender.com](https://drone-sim-901y.onrender.com)
+Live Demo: [drone-sim-901y.onrender.com](https://drone-sim-901y.onrender.com)
 
 ![Dashboard](dashboard.png)
 
-## ✨ Features
+## Core Features
 
-- **RRT\* Algorithm in 3D** — Asymptotically optimal path planning in continuous space
-- **Energy-Aware Cost Model** — Optimizes for distance, altitude gain, and wind drag
-- **B-Spline Trajectory Smoothing** — Converts raw waypoints into flyable, aerodynamic paths
-- **Interactive 3D Dashboard** — Full-screen Three.js visualizer with Blender-style camera controls
-- **Real-Time WebSocket Streaming** — Live path updates and fleet telemetry
-- **Detailed Quadcopter Models** — Animated drones with spinning propellers, movement tilt, and hover wobble
-- **Environment Editor** — Click to modify buildings, place obstacles, randomize city maps
-- **Simulation History** — Auto-save, replay, and compare past simulation runs
-- **Scenario Management** — Export/import full environment configurations as JSON
-- **Collapsible UI** — Hamburger menu for controls, floating logs overlay, centered results popup
-- **Auto-Redirect** — Root URL redirects straight to the dashboard
+### Path Planning and Optimization
+* **3D RRT* Algorithm**: Implements asymptotically optimal path planning in continuous 3D space, ensuring efficient navigation around complex obstacles.
+* **Energy-Aware Cost Model**: Optimizes flight paths based on total Euclidean distance, altitude changes, and simulated wind drag factors.
+* **B-Spline Trajectory Smoothing**: Automatically converts raw RRT* waypoints into smooth, flyable, and aerodynamically sound trajectories.
 
-## 🛠 Tech Stack
+### Unsupervised Learning Analysis
+* **Flight-Path Clustering**: Uses k-Means and DBSCAN algorithms to identify common route patterns and anomalies across multiple simulation runs.
+* **Manifold Learning**: Employs Principal Component Analysis (PCA) to reduce high-dimensional path data into 2D scatter plots for intuitive visualization of flight clusters.
+* **Representative Centroids**: Automatically calculates the mean path (centroid) for each identified cluster to highlight dominant navigation strategies.
+
+### Interactive Simulation Environment
+* **Real-Time Visualization**: Powered by Three.js (r128), providing a full-screen 3D dashboard with fluid camera controls and high-fidelity quadcopter models.
+* **Dynamic Environment Editor**: Allows users to modify building heights, place new obstacles, and generate randomized city layouts in real-time.
+* **WebSocket Telemetry**: Provides a low-latency bidirectional stream for live path updates, fleet telemetry, and simulation logs.
+
+## Technical Specifications
 
 | Layer | Technology |
 |---|---|
-| **Backend** | Python, FastAPI, Uvicorn |
-| **Math** | NumPy, SciPy (B-Splines) |
-| **Frontend** | HTML5, TailwindCSS, Three.js (r128) |
-| **Communication** | WebSockets (real-time), REST API |
-| **Hosting** | [Render](https://render.com) (free tier) |
+| **Backend** | Python 3.8+, FastAPI, Uvicorn |
+| **Logic/Mathematics** | NumPy, SciPy (B-Splines), Scikit-Learn (Clustering) |
+| **Frontend** | HTML5, TailwindCSS, Three.js |
+| **Communication** | WebSockets (Real-time), REST API |
+| **Deployment** | Render (Web Service) |
 
-## 🚀 Quick Start
+## Getting Started
 
 ### Prerequisites
-- Python 3.8+
+* Python 3.8 or higher
+* Modern web browser with WebGL support
 
-### Local Development
+### Local Installation
 
-```bash
-# Clone the repository
-git clone https://github.com/patelhashilkumar/drone-sim.git
-cd drone-sim
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/patelhashilkumar/drone-sim.git
+   cd drone-sim
+   ```
 
-# Install dependencies
-pip install -r requirements.txt
+2. Install the required Python dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-# Start the server
-python server.py
-```
+3. Launch the simulation server:
+   ```bash
+   python server.py
+   ```
 
-Open **http://localhost:8000** in your browser (auto-redirects to dashboard).
+4. Access the dashboard:
+   Open `http://localhost:8000` in your web browser. The server automatically redirects to the interactive 3D interface.
 
-### Deploy to Render
-
-1. Fork or push this repo to your GitHub
-2. Go to [render.com](https://render.com) → **New** → **Web Service**
-3. Connect your GitHub repo — Render auto-detects `render.yaml`
-4. Set **Build Command:** `pip install -r requirements.txt`
-5. Set **Start Command:** `uvicorn server:app --host 0.0.0.0 --port $PORT`
-6. Select **Free** tier → **Create Web Service**
-
-## 🎮 Controls
+## Control Interface
 
 | Action | Input |
 |---|---|
 | **Orbit / Rotate** | Left-click + Drag |
 | **Pan** | Middle-click + Drag |
 | **Zoom** | Scroll wheel |
-| **Open Controls** | ☰ Hamburger menu (top-left) |
-| **View Logs** | Logs panel (top-right) |
+| **Open Settings** | Hamburger menu (top-left) |
+| **View Telemetry** | Logs panel (top-right) |
 
-## 📖 Usage
+## Project Architecture
 
-1. **Connect** — Dashboard auto-connects to backend (green status dot)
-2. **Start** — Click ▶ Start to begin RRT* path planning
-3. **Tune** — Open ☰ menu to adjust Heuristic Weight, Spline Degree, Smoothness
-4. **Edit** — Toggle Edit Mode, click buildings to change heights
-5. **Add Obstacles** — Click Add Obstacle, then click ground to place
-6. **Randomize** — Generate a fresh 3D city layout
-7. **History** — View, replay, and compare past simulations
+* **server.py**: Main FastAPI entry point handling WebSocket connections, REST endpoints, and simulation state.
+* **planner.py**: Implementation of the RRT* algorithm and B-Spline trajectory smoothing logic.
+* **clustering.py**: Unsupervised learning pipeline for path resampling, feature extraction, and clustering.
+* **environment.py**: Spatial management system for 3D grid bounds, obstacle collision detection, and city generation.
+* **index.html**: Unified frontend containing the Three.js rendering engine and UI components.
 
-## 📁 Project Structure
+## License
 
-```
-├── server.py        # FastAPI server, WebSocket handler, simulation storage
-├── planner.py       # RRT* search + B-Spline trajectory smoothing
-├── environment.py   # 3D grid, obstacle management, bounds checking
-├── index.html       # Three.js dashboard + UI (single-file frontend)
-├── test_planner.py  # Unit tests for planner
-├── requirements.txt # Python dependencies
-├── render.yaml      # Render deployment config
-└── README.md
-```
-
-## 📄 License
-
-MIT License
+This project is licensed under the MIT License.
